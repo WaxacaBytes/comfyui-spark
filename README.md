@@ -31,10 +31,12 @@ docker push abelpc/comfyui-spark:latest
 ## GitHub Actions
 
 This repository includes CI at `.github/workflows/docker-image.yml`.
-On each push to `main`, it builds and pushes:
+On each push to `main`, CI resolves the latest official release from `Comfy-Org/ComfyUI` and builds against that tag.
+It then pushes:
 - `abelpc/comfyui-spark:latest`
 - `abelpc/comfyui-spark:main`
 - `abelpc/comfyui-spark:sha-<commit>`
+- `abelpc/comfyui-spark:comfyui-<upstream-tag>` (example: `comfyui-v0.14.2`)
 
 On `v*` tags, it also pushes the tag name (for example `v1.0.0`).
 

@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu130
 
 # Clone ComfyUI
-ARG COMFYUI_REPO=https://github.com/comfyanonymous/ComfyUI.git
+ARG COMFYUI_REPO=https://github.com/Comfy-Org/ComfyUI.git
 ARG COMFYUI_REF=6d11cc73549e14a0a31e9ff8c90bfd71b380fe2c
 RUN git clone "$COMFYUI_REPO" /app/ComfyUI && \
     cd /app/ComfyUI && git checkout "$COMFYUI_REF"

@@ -26,6 +26,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Resolve latest ComfyUI release
+        id: comfy
+        run: |
+          set -euo pipefail
+          tag="$(curl -fsSL https://api.github.com/repos/Comfy-Org/ComfyUI/releases/latest | jq -r '.tag_name')"
+          if [ -z "${tag}" ] || [ "${tag}" = "null" ]; then
+            echo "Failed to resolve latest ComfyUI release tag" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Using ComfyUI release: ${tag}"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -36,6 +48,8 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha,prefix=sha-
+            type=raw,value={{branch}}-comfyui-${{ steps.comfy.outputs.tag }},enable={{is_default_branch}}
+            type=raw,value=comfyui-${{ steps.comfy.outputs.tag }},enable={{is_default_branch}}
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
@@ -50,6 +64,9 @@ jobs:
           context: .
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            COMFYUI_REPO=https://github.com/Comfy-Org/ComfyUI.git
+            COMFYUI_REF=${{ steps.comfy.outputs.tag }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
