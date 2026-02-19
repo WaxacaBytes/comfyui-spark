@@ -51,8 +51,21 @@ jobs:
             type=raw,value={{branch}}-comfyui-${{ steps.comfy.outputs.tag }},enable={{is_default_branch}}
             type=raw,value=comfyui-${{ steps.comfy.outputs.tag }},enable={{is_default_branch}}
 
+      - name: Decide publish mode
+        id: publish
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ] && [ -n "${DOCKERHUB_USERNAME}" ] && [ -n "${DOCKERHUB_TOKEN}" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request' && secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
+        if: steps.publish.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -63,10 +76,10 @@ jobs:
         with:
           context: .
           platforms: linux/arm64
-          push: ${{ github.event_name != 'pull_request' && secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
           build-args: |
             COMFYUI_REPO=https://github.com/Comfy-Org/ComfyUI.git
             COMFYUI_REF=${{ steps.comfy.outputs.tag }}
+          push: ${{ steps.publish.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
