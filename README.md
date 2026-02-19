@@ -44,6 +44,8 @@ Required repository secrets:
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 
+If these secrets are missing, CI still runs a non-push build test, but it will not publish tags.
+
 ## Customize upstream ComfyUI
 
 The Dockerfile exposes two build args:
