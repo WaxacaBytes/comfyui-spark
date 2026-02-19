@@ -1,61 +1,79 @@
-# comfyui-spark
+# ComfyUI Spark
 
-GPU-ready ComfyUI Docker image for DGX Spark / ARM64 with Spark-specific UX patches:
-- server-side model downloads from the Missing Models modal
-- persistent download progress behavior patched in frontend bundle
-- optional first-run SD 1.5 checkpoint download
+A GPU-ready [ComfyUI](https://github.com/Comfy-Org/ComfyUI) Docker image built for **NVIDIA DGX Spark / ARM64** with CUDA 13.0.
 
-This repository is an **overlay repo**: it does not vendor ComfyUI source.
-The Docker build clones upstream ComfyUI at a pinned commit and applies Spark patches on top.
+This image packages upstream ComfyUI with quality-of-life patches so you can run it standalone or as the compute backend for [SparkForge](https://github.com/WaxacaBytes/sparkforge).
 
-## Run
+## What's included
+
+Everything in upstream ComfyUI, plus:
+
+- **Server-side model downloads** — download models directly from the Missing Models dialog (supports HuggingFace, CivitAI, and GitHub URLs)
+- **Download progress tracking** — patched frontend shows real-time progress for server-side downloads
+- **Optional first-run checkpoint** — automatically downloads SD 1.5 (fp16) on first start if no checkpoints are present
+
+This is an **overlay repo**: it does not vendor ComfyUI source. The Docker build clones upstream at a pinned release and applies patches on top.
+
+## Quick start
+
+### Standalone
 
 ```bash
 docker compose up -d
 ```
 
-Then open `http://localhost:8188`.
+Open `http://localhost:8188`.
 
-## Build
+### With SparkForge
+
+This image is published to Docker Hub as [`abelpc/comfyui-spark`](https://hub.docker.com/r/abelpc/comfyui-spark) and is consumed automatically by SparkForge. See the [SparkForge repo](https://github.com/WaxacaBytes/sparkforge) for setup instructions.
+
+## Volumes
+
+The compose file mounts three named volumes so data persists across container restarts:
+
+| Volume | Container path | Contents |
+|---|---|---|
+| `comfyui-models` | `/app/ComfyUI/models` | Checkpoints, LoRAs, VAEs, etc. |
+| `comfyui-output` | `/app/ComfyUI/output` | Generated images |
+| `comfyui-input` | `/app/ComfyUI/input` | Input images |
+
+## Build from source
 
 ```bash
 docker build -t abelpc/comfyui-spark:latest .
 ```
 
-## Push
-
-```bash
-docker push abelpc/comfyui-spark:latest
-```
-
-## GitHub Actions
-
-This repository includes CI at `.github/workflows/docker-image.yml`.
-On each push to `main`, CI resolves the latest official release from `Comfy-Org/ComfyUI` and builds against that tag.
-It then pushes:
-- `abelpc/comfyui-spark:latest`
-- `abelpc/comfyui-spark:main`
-- `abelpc/comfyui-spark:sha-<commit>`
-- `abelpc/comfyui-spark:comfyui-<upstream-tag>` (example: `comfyui-v0.14.2`)
-
-On `v*` tags, it also pushes the tag name (for example `v1.0.0`).
-
-Required repository secrets:
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-
-If these secrets are missing, CI still runs a non-push build test, but it will not publish tags.
-
-## Customize upstream ComfyUI
-
-The Dockerfile exposes two build args:
-- `COMFYUI_REPO`
-- `COMFYUI_REF`
-
-Example:
+To pin a specific ComfyUI version:
 
 ```bash
 docker build \
   --build-arg COMFYUI_REF=<commit-or-tag> \
   -t abelpc/comfyui-spark:custom .
 ```
+
+## CI / CD
+
+On every push to `main`, GitHub Actions resolves the latest ComfyUI release and builds an ARM64 image. Published tags:
+
+| Tag | Description |
+|---|---|
+| `latest` | Most recent build from `main` |
+| `main` | Alias for the default branch |
+| `sha-<commit>` | Pinned to a specific commit |
+| `comfyui-<version>` | Tracks upstream ComfyUI release (e.g. `comfyui-v0.14.2`) |
+
+Pushes to `v*` tags also publish the tag name (e.g. `v1.0.0`).
+
+### Required secrets
+
+Set these in a GitHub environment named **DockerHub**:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+If the secrets are missing, CI runs a build-only test without pushing.
+
+## License
+
+Same license as [ComfyUI](https://github.com/Comfy-Org/ComfyUI/blob/main/LICENSE).
