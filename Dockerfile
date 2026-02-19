@@ -32,9 +32,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Add server-side model download custom node
 COPY server_download.py /app/ComfyUI/custom_nodes/server_download.py
 
-# Include prebuilt frontend patch; entrypoint applies it at container start.
+# Include frontend patch script and download manager; entrypoint applies at container start.
 RUN mkdir -p /app/web_patches
-COPY web_patches/MissingModelsWarning.js.patched /app/web_patches/MissingModelsWarning.js.patched
+COPY web_patches/patch_frontend.py /app/web_patches/patch_frontend.py
+COPY web_patches/download_manager.js /app/web_patches/download_manager.js
 
 # Create directories for external volumes
 RUN mkdir -p /app/ComfyUI/models/checkpoints \
