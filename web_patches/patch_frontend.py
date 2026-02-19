@@ -51,9 +51,10 @@ ONCLICK_HANDLER = (
 )
 
 # Regex to find the onClick handler that calls triggerBrowserDownload.
-# Matches: onClick:VARNAME.triggerBrowserDownload
-# The variable name is typically a single minified letter.
-ONCLICK_PATTERN = re.compile(r"onClick:\w+\.triggerBrowserDownload")
+# Matches patterns like: onClick:s.triggerBrowserDownload
+#                    or: onClick:u(s).triggerBrowserDownload
+# Uses a non-greedy match for any expression before .triggerBrowserDownload.
+ONCLICK_PATTERN = re.compile(r"onClick:[^,}]+?\.triggerBrowserDownload")
 
 
 def find_target_file():
