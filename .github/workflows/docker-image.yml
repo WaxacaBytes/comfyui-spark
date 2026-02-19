@@ -72,7 +72,9 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push (attempt 1)
+        id: build_push_1
+        continue-on-error: true
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -81,7 +83,32 @@ jobs:
             COMFYUI_REPO=https://github.com/Comfy-Org/ComfyUI.git
             COMFYUI_REF=${{ steps.comfy.outputs.tag }}
           push: ${{ steps.publish.outputs.push == 'true' }}
+          provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push (attempt 2)
+        id: build_push_2
+        if: steps.build_push_1.outcome == 'failure'
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          build-args: |
+            COMFYUI_REPO=https://github.com/Comfy-Org/ComfyUI.git
+            COMFYUI_REF=${{ steps.comfy.outputs.tag }}
+          push: ${{ steps.publish.outputs.push == 'true' }}
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Fail if both attempts failed
+        if: steps.build_push_1.outcome == 'failure' && steps.build_push_2.outcome == 'failure'
+        run: |
+          echo "Both build/push attempts failed."
+          exit 1
