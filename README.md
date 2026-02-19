@@ -28,6 +28,20 @@ docker build -t abelpc/comfyui-spark:latest .
 docker push abelpc/comfyui-spark:latest
 ```
 
+## GitHub Actions
+
+This repository includes CI at `.github/workflows/docker-image.yml`.
+On each push to `main`, it builds and pushes:
+- `abelpc/comfyui-spark:latest`
+- `abelpc/comfyui-spark:main`
+- `abelpc/comfyui-spark:sha-<commit>`
+
+On `v*` tags, it also pushes the tag name (for example `v1.0.0`).
+
+Required repository secrets:
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
 ## Customize upstream ComfyUI
 
 The Dockerfile exposes two build args:
