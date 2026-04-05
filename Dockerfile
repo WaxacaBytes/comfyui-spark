@@ -26,8 +26,11 @@ RUN git clone "$COMFYUI_REPO" /app/ComfyUI && \
 
 WORKDIR /app/ComfyUI
 
-# Install ComfyUI dependencies + aiohttp for server-side downloads
-RUN pip install --no-cache-dir -r requirements.txt
+# Install ComfyUI dependencies, then restore the matching CUDA torchaudio wheel.
+# ComfyUI currently pulls torchaudio separately and can upgrade it past the
+# pinned torch version, which breaks import on Spark.
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu130 torchaudio==2.10.0
 
 # Add server-side model download custom node
 COPY server_download.py /app/ComfyUI/custom_nodes/server_download.py
