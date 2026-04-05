@@ -1,117 +1,227 @@
 #!/usr/bin/env python3
 """
-Patches the ComfyUI frontend JS to replace browser-based model downloads
-with server-side downloads via /api/download-model.
+Patch ComfyUI frontend assets so Missing Models downloads run on the server.
 
-Idempotent: skips if already patched (__sfDownloadMgr marker present).
+For recent ComfyUI frontend versions, the download logic lives in the
+missingModelDownload-*.js chunk. Older versions used an inline
+triggerBrowserDownload click handler inside the main bundle.
+
+This script supports both:
+- Preferred: patch missingModelDownload-*.js
+- Fallback: patch legacy triggerBrowserDownload bundles
+
+Idempotent: skips if the server-side patch marker is already present.
 """
 
+from __future__ import annotations
+
 import glob
+import importlib.resources
 import os
 import re
 import sys
+from pathlib import Path
 
-ASSETS_DIR = "/app/venv/lib/python3.12/site-packages/comfyui_frontend_package/static/assets"
-DOWNLOAD_MANAGER_JS = os.path.join(os.path.dirname(__file__), "download_manager.js")
 
-# The server-side onClick handler that replaces triggerBrowserDownload.
-# Uses t.url and t.label from the FileDownload component's setup closure.
-ONCLICK_HANDLER = (
+DOWNLOAD_MANAGER_JS = Path(__file__).with_name("download_manager.js")
+PATCH_MARKER = "__sfServerDownloadV2"
+ENV_ASSETS_DIR = "COMFYUI_FRONTEND_ASSETS_DIR"
+
+
+LEGACY_ONCLICK_HANDLER = (
     "onClick:function(){"
-    "var _btn=arguments[0]&&arguments[0].target?arguments[0].target:null;"
-    'var _parts=t.label?t.label.split(" / "):[];'
-    'var _dir=_parts.length>1?_parts[0].trim():"checkpoints";'
-    'var _fn=_parts.length>1?_parts.slice(1).join("/").trim():(t.url||"").split("/").pop().split("?")[0];'
-    'var _key=_dir+"/"+_fn;'
-    'if(_btn){_btn.textContent="Starting...";_btn.disabled=true}'
-    "var _h=new Headers();"
-    '_h.set("Content-Type","application/json");'
-    'fetch("/api/download-model",{method:"POST",headers:_h,body:JSON.stringify({url:t.url,directory:_dir,filename:_fn})})'
-    ".then(function(r){return r.json()})"
-    ".then(function(d){"
-    'if(d.status==="started"){'
-    'if(_btn){_btn.textContent="Downloading...";_btn.style.color="#fbbf24"}'
-    "window.__sfStartTracker(_key,_fn,_btn)"
-    '}'
-    'else if(d.status==="already_downloading"){'
-    'if(_btn){_btn.textContent="Downloading...";_btn.style.color="#fbbf24"}'
-    "window.__sfStartTracker(_key,_fn,_btn)"
-    '}'
-    'else if(d.status==="already_exists"){'
-    'if(_btn){_btn.textContent="Already exists";_btn.style.color="#4ade80"}'
-    '}'
-    "else{"
-    'if(_btn){_btn.textContent="Error: "+(d.error||"unknown");_btn.style.color="#f87171";_btn.disabled=false}'
-    "}"
-    "})"
-    ".catch(function(err){"
-    'if(_btn){_btn.textContent="Failed";_btn.style.color="#f87171";_btn.disabled=false}'
-    "})"
+    "var _parts=t.label?t.label.split(\" / \"):[];"
+    "var _dir=_parts.length>1?_parts[0].trim():\"checkpoints\";"
+    "var _fn=_parts.length>1?_parts.slice(1).join(\"/\").trim():(t.url||\"\").split(\"/\").pop().split(\"?\")[0];"
+    "if(window.__sfServerDownloadStart){window.__sfServerDownloadStart({url:t.url,directory:_dir,name:_fn})}"
     "}"
 )
+LEGACY_ONCLICK_PATTERN = re.compile(r"onClick:[^,}]+?\.triggerBrowserDownload")
 
-# Regex to find the onClick handler that calls triggerBrowserDownload.
-# Matches patterns like: onClick:s.triggerBrowserDownload
-#                    or: onClick:u(s).triggerBrowserDownload
-# Uses a non-greedy match for any expression before .triggerBrowserDownload.
-ONCLICK_PATTERN = re.compile(r"onClick:[^,}]+?\.triggerBrowserDownload")
+SERVER_DOWNLOAD_HELPER = r"""
+;(()=>{if(typeof window==="undefined"||window.__sfServerDownloadV2)return;window.__sfServerDownloadV2=true;
+var _sources=["https://civitai.com/","https://huggingface.co/","https://github.com/","https://raw.githubusercontent.com/","http://localhost:"];
+var _suffixes=[".safetensors",".sft",".ckpt",".pth",".pt",".pt2",".bin",".pkl",".gguf",".onnx"];
+function _getString(v){return typeof v==="string"?v:""}
+function _filenameFromUrl(url){
+  try{
+    var u=new URL(url);
+    var part=u.pathname.split("/").pop()||"";
+    return decodeURIComponent(part).trim();
+  }catch(_e){
+    var raw=_getString(url).split("/").pop()||"";
+    return raw.split("?")[0].trim();
+  }
+}
+function _isAllowedSource(url){
+  return _sources.some(function(prefix){return _getString(url).startsWith(prefix)});
+}
+function _isAllowedSuffix(name){
+  var lower=_getString(name).toLowerCase();
+  return _suffixes.some(function(ext){return lower.endsWith(ext)});
+}
+window.__sfServerDownloadValidate=function(model){
+  if(!model||typeof model!=="object")return false;
+  var url=_getString(model.url);
+  var name=_getString(model.name)||_filenameFromUrl(url);
+  return !!url&&_isAllowedSource(url)&&_isAllowedSuffix(name);
+};
+window.__sfServerDownloadStart=function(model){
+  if(!window.__sfServerDownloadValidate(model))return Promise.resolve({status:"invalid"});
+  var url=_getString(model.url);
+  var directory=_getString(model.directory)||"checkpoints";
+  var filename=_getString(model.name)||_filenameFromUrl(url);
+  var key=directory+"/"+filename;
+  return fetch("/api/download-model",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({url:url,directory:directory,filename:filename})
+  }).then(function(resp){return resp.json()}).then(function(data){
+    if((data.status==="started"||data.status==="already_downloading")&&window.__sfStartTracker){
+      window.__sfStartTracker(key,filename,null);
+    }
+    return data;
+  }).catch(function(err){
+    return {status:"error",error:String(err)};
+  });
+};
+})();
+""".strip()
 
 
-def find_target_file():
-    """Find the JS file containing triggerBrowserDownload."""
-    pattern = os.path.join(ASSETS_DIR, "*.js")
-    for filepath in glob.glob(pattern):
-        if filepath.endswith(".map"):
-            continue
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-        if "triggerBrowserDownload" in content:
-            return filepath, content
-    return None, None
+def get_assets_dir() -> Path:
+    env_override = os.getenv(ENV_ASSETS_DIR)
+    if env_override:
+        return Path(env_override)
 
+    try:
+        import comfyui_frontend_package
 
-def main():
-    # Find target file
-    filepath, content = find_target_file()
-    if not filepath:
-        print("[comfyui-spark] ERROR: Could not find JS file containing triggerBrowserDownload")
+        return Path(importlib.resources.files(comfyui_frontend_package) / "static" / "assets")
+    except Exception as exc:  # pragma: no cover - runtime fallback
+        print(f"[comfyui-spark] ERROR: unable to locate frontend assets: {exc}")
         sys.exit(1)
 
-    print(f"[comfyui-spark] Found target: {os.path.basename(filepath)}")
 
-    # Check idempotency
-    if "__sfDownloadMgr" in content:
-        print("[comfyui-spark] Already patched (found __sfDownloadMgr). Skipping.")
-        return
-
-    # Find and count matches
-    matches = ONCLICK_PATTERN.findall(content)
-    if not matches:
-        print("[comfyui-spark] ERROR: Could not find onClick:*.triggerBrowserDownload pattern")
-        sys.exit(1)
-
-    print(f"[comfyui-spark] Found {len(matches)} onClick:triggerBrowserDownload occurrence(s)")
-
-    # Replace the onClick handler (only in FileDownload, not ElectronFileDownload)
-    # The FileDownload component is the web version; ElectronFileDownload is for desktop.
-    # We replace ALL occurrences since the pattern only appears in FileDownload's template.
-    patched = ONCLICK_PATTERN.sub(ONCLICK_HANDLER, content)
-
-    # Load and append the download manager IIFE
-    if not os.path.exists(DOWNLOAD_MANAGER_JS):
+def load_download_manager() -> str:
+    if not DOWNLOAD_MANAGER_JS.exists():
         print(f"[comfyui-spark] ERROR: {DOWNLOAD_MANAGER_JS} not found")
         sys.exit(1)
+    return DOWNLOAD_MANAGER_JS.read_text(encoding="utf-8")
 
-    with open(DOWNLOAD_MANAGER_JS, "r", encoding="utf-8") as f:
-        dm_code = f.read()
 
-    patched += "\n" + dm_code
+def append_patch_payload(content: str) -> str:
+    return content + "\n" + SERVER_DOWNLOAD_HELPER + "\n" + load_download_manager() + "\n"
 
-    # Write back
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(patched)
 
-    print("[comfyui-spark] Done. Server-side download patch applied successfully.")
+def find_matching_brace(content: str, open_brace_index: int) -> int:
+    depth = 0
+    for idx in range(open_brace_index, len(content)):
+        ch = content[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return idx
+    raise ValueError("Unbalanced braces while patching frontend asset")
+
+
+def replace_named_function(content: str, name: str, replacement: str) -> tuple[str, bool]:
+    marker = f"function {name}("
+    start = content.find(marker)
+    if start == -1:
+        return content, False
+    open_brace = content.find("{", start)
+    if open_brace == -1:
+        raise ValueError(f"Could not find opening brace for {name}")
+    end = find_matching_brace(content, open_brace)
+    return content[:start] + replacement + content[end + 1 :], True
+
+
+def patch_download_module(assets_dir: Path) -> bool:
+    candidates = list(sorted(assets_dir.glob("missingModelDownload-*.js")))
+    candidates.extend(
+        path
+        for path in sorted(assets_dir.glob("*.js"))
+        if path.name.startswith("dialogService-")
+    )
+    candidates.extend(
+        path
+        for path in sorted(assets_dir.glob("*.js"))
+        if path not in candidates
+    )
+
+    for path in candidates:
+        content = path.read_text(encoding="utf-8", errors="replace")
+        if "function downloadModel(" not in content or "function isModelDownloadable(" not in content:
+            continue
+        if PATCH_MARKER in content:
+            print(f"[comfyui-spark] Already patched: {path.name}")
+            return True
+
+        patched, changed_validate = replace_named_function(
+            content,
+            "isModelDownloadable",
+            "function isModelDownloadable(e){return !!(window.__sfServerDownloadValidate&&window.__sfServerDownloadValidate(e))}",
+        )
+        patched, changed_download = replace_named_function(
+            patched,
+            "downloadModel",
+            "function downloadModel(t,n){return window.__sfServerDownloadStart?window.__sfServerDownloadStart({url:t.url,directory:t.directory,name:t.name}):void 0}",
+        )
+
+        if not (changed_validate and changed_download):
+            continue
+
+        path.write_text(append_patch_payload(patched), encoding="utf-8")
+        print(f"[comfyui-spark] Patched frontend download module: {path.name}")
+        return True
+
+    return False
+
+
+def patch_legacy_bundle(assets_dir: Path) -> bool:
+    for path in glob.glob(str(assets_dir / "*.js")):
+        if path.endswith(".map"):
+            continue
+        content = Path(path).read_text(encoding="utf-8", errors="replace")
+        if "triggerBrowserDownload" not in content:
+            continue
+        if PATCH_MARKER in content:
+            print(f"[comfyui-spark] Already patched: {os.path.basename(path)}")
+            return True
+
+        matches = LEGACY_ONCLICK_PATTERN.findall(content)
+        if not matches:
+            continue
+
+        patched = LEGACY_ONCLICK_PATTERN.sub(LEGACY_ONCLICK_HANDLER, content)
+        Path(path).write_text(append_patch_payload(patched), encoding="utf-8")
+        print(f"[comfyui-spark] Patched legacy frontend bundle: {os.path.basename(path)}")
+        return True
+
+    return False
+
+
+def main() -> None:
+    assets_dir = get_assets_dir()
+    if not assets_dir.is_dir():
+        print(f"[comfyui-spark] ERROR: assets directory not found: {assets_dir}")
+        sys.exit(1)
+
+    print(f"[comfyui-spark] Frontend assets: {assets_dir}")
+
+    if patch_download_module(assets_dir):
+        print("[comfyui-spark] Done. Server-side download patch applied.")
+        return
+
+    if patch_legacy_bundle(assets_dir):
+        print("[comfyui-spark] Done. Server-side download patch applied.")
+        return
+
+    print("[comfyui-spark] ERROR: Could not find a supported frontend download hook to patch")
+    sys.exit(1)
 
 
 if __name__ == "__main__":

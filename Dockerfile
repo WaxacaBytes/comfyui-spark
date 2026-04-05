@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Clone ComfyUI
 ARG COMFYUI_REPO=https://github.com/Comfy-Org/ComfyUI.git
-ARG COMFYUI_REF=6d11cc73549e14a0a31e9ff8c90bfd71b380fe2c
+ARG COMFYUI_REF=v0.18.1
 RUN git clone "$COMFYUI_REPO" /app/ComfyUI && \
     cd /app/ComfyUI && git checkout "$COMFYUI_REF"
 

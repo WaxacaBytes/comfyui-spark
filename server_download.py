@@ -9,8 +9,11 @@ Endpoints:
 
 import os
 import asyncio
+from pathlib import Path
+
 import aiohttp
 from aiohttp import web
+
 import folder_paths
 import server
 
@@ -76,9 +79,30 @@ ALLOWED_SOURCES = [
     "https://huggingface.co/",
     "http://localhost:",
     "https://github.com/",
+    "https://raw.githubusercontent.com/",
 ]
 
-ALLOWED_SUFFIXES = [".safetensors", ".sft", ".ckpt", ".pth", ".bin", ".gguf"]
+ALLOWED_SUFFIXES = set(getattr(folder_paths, "supported_pt_extensions", set()))
+ALLOWED_SUFFIXES.update({".gguf", ".onnx"})
+
+
+def resolve_target_dir(directory: str) -> str:
+    key = directory or "checkpoints"
+    if hasattr(folder_paths, "map_legacy"):
+        key = folder_paths.map_legacy(key)
+
+    if hasattr(folder_paths, "get_folder_paths"):
+        try:
+            paths = folder_paths.get_folder_paths(key)
+            if paths:
+                return paths[0]
+        except Exception:
+            pass
+
+    if key in folder_paths.folder_names_and_paths:
+        return folder_paths.folder_names_and_paths[key][0][0]
+
+    return folder_paths.folder_names_and_paths["checkpoints"][0][0]
 
 
 @server.PromptServer.instance.routes.post("/api/download-model")
@@ -96,28 +120,28 @@ async def download_model(request):
             {"error": f"Download not allowed from this source"}, status=403
         )
 
-    if not any(filename.endswith(s) for s in ALLOWED_SUFFIXES):
+    safe_name = Path(filename).name
+    if safe_name != filename:
+        return web.json_response({"error": "invalid filename"}, status=400)
+
+    lower_name = safe_name.lower()
+    if not any(lower_name.endswith(s) for s in ALLOWED_SUFFIXES):
         return web.json_response({"error": f"File type not allowed"}, status=403)
 
-    # Resolve the target directory
-    if directory and directory in folder_paths.folder_names_and_paths:
-        target_dir = folder_paths.folder_names_and_paths[directory][0][0]
-    else:
-        target_dir = folder_paths.folder_names_and_paths.get(
-            "checkpoints", [[""]]
-        )[0][0]
+    target_dir = resolve_target_dir(directory)
+    os.makedirs(target_dir, exist_ok=True)
 
-    filepath = os.path.join(target_dir, filename)
+    filepath = os.path.join(target_dir, safe_name)
 
     if os.path.exists(filepath):
         return web.json_response({"status": "already_exists", "path": filepath})
 
-    key = f"{directory}/{filename}"
+    key = f"{directory or 'checkpoints'}/{safe_name}"
     existing = _downloads.get(key)
     if existing and existing.status in ("pending", "downloading"):
         return web.json_response({"status": "already_downloading", "key": key})
 
-    tracker = DownloadTracker(url, filepath, filename)
+    tracker = DownloadTracker(url, filepath, safe_name)
     _downloads[key] = tracker
 
     _download_tasks[key] = asyncio.create_task(download_file(key, tracker))
